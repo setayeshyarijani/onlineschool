@@ -1,7 +1,11 @@
 -- =============================================================================
--- Online School Management System (MySQL) - FINAL VERSION v5.2 (works)
+-- Online School Management System (MySQL) - FINAL CORRECTED v5.4
 -- =============================================================================
--- Fixed: DEFAULT (CURDATE()) for HireDate in Teacher table (parentheses required)
+-- This script includes all fixes:
+-- 1. sp_SubmitAssignment now correctly updates existing submission using ON DUPLICATE KEY UPDATE
+-- 2. Prevents overwriting graded submissions
+-- 3. sp_GetStudentGrades shows all successful enrollments and all submissions
+-- 4. All tables, indexes, sample data, triggers, views, reports, security roles
 -- =============================================================================
 
 DROP DATABASE IF EXISTS OnlineSchoolDB;
@@ -9,7 +13,7 @@ CREATE DATABASE OnlineSchoolDB;
 USE OnlineSchoolDB;
 
 -- =============================================================================
--- TABLES (using VARCHAR + CHECK for standard SQL compatibility)
+-- TABLES (unchanged)
 -- =============================================================================
 
 CREATE TABLE `User` (
@@ -166,7 +170,7 @@ CREATE TABLE Announcement (
 );
 
 -- =============================================================================
--- INDEXES (for performance)
+-- INDEXES
 -- =============================================================================
 
 CREATE INDEX idx_User_Email ON `User`(Email);
@@ -197,7 +201,7 @@ CREATE INDEX idx_Announcement_CourseID ON Announcement(CourseID);
 CREATE INDEX idx_Announcement_CreatedAt ON Announcement(CreatedAt);
 
 -- =============================================================================
--- SAMPLE DATA (exactly as in the original v2)
+-- SAMPLE DATA (same as original, up to UserID 11, plus a new student if needed)
 -- =============================================================================
 
 SET @OLD_FOREIGN_KEY_CHECKS = @@FOREIGN_KEY_CHECKS;
@@ -309,7 +313,7 @@ ALTER TABLE FinancialReportLog AUTO_INCREMENT = 1;
 ALTER TABLE Announcement AUTO_INCREMENT = 6;
 
 -- =============================================================================
--- FUNCTION (without DETERMINISTIC, with READS SQL DATA)
+-- FUNCTION
 -- =============================================================================
 
 DELIMITER //
@@ -330,7 +334,7 @@ END //
 DELIMITER ;
 
 -- =============================================================================
--- PROCEDURES (all fixes applied)
+-- PROCEDURES
 -- =============================================================================
 
 DELIMITER //
@@ -438,8 +442,6 @@ BEGIN
     UPDATE Enrollment SET Status = 'Successful' WHERE EnrollmentID = v_EnrollmentID;
     UPDATE Payment SET Status = 'Successful' WHERE PaymentID = v_PaymentID;
 
-    -- Income update is handled by trg_Payment_Update_TeacherIncome
-
     CALL sp_CalculateStudentGPA(p_StudentID);
 
     COMMIT;
@@ -449,6 +451,9 @@ BEGIN
            v_CourseTitle AS CourseTitle, 'Enrollment completed successfully.' AS Message;
 END //
 
+-- =============================================================================
+-- FIXED sp_SubmitAssignment: uses ON DUPLICATE KEY UPDATE to prevent duplicates
+-- =============================================================================
 CREATE PROCEDURE sp_SubmitAssignment(
     IN p_AssignmentID INT,
     IN p_StudentID INT,
@@ -458,9 +463,10 @@ BEGIN
     DECLARE v_CourseID INT;
     DECLARE v_DueDate DATETIME(0);
     DECLARE v_StudentStatus VARCHAR(20);
-    DECLARE v_ExistingSubmissionID INT;
     DECLARE v_ExistingScore DECIMAL(4,2);
+    DECLARE v_ExistingSubmissionID INT;
 
+    -- Validate assignment and course
     SELECT a.CourseID, a.DueDate INTO v_CourseID, v_DueDate
     FROM Assignment a
     INNER JOIN Course c ON a.CourseID = c.CourseID
@@ -470,6 +476,7 @@ BEGIN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Assignment not found or course deleted.';
     END IF;
 
+    -- Validate student
     SELECT s.Status INTO v_StudentStatus
     FROM Student s
     WHERE s.StudentID = p_StudentID;
@@ -478,6 +485,7 @@ BEGIN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Student not found or inactive.';
     END IF;
 
+    -- Check enrollment
     IF NOT EXISTS (
         SELECT 1 FROM Enrollment e
         WHERE e.StudentID = p_StudentID
@@ -487,31 +495,33 @@ BEGIN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Student is not enrolled in the course.';
     END IF;
 
+    -- Check deadline
     IF NOW() > v_DueDate THEN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Assignment deadline has passed.';
     END IF;
 
-    SELECT SubmissionID, Score INTO v_ExistingSubmissionID, v_ExistingScore
+    -- Check if already graded
+    SELECT Score INTO v_ExistingScore
     FROM Submission
     WHERE AssignmentID = p_AssignmentID AND StudentID = p_StudentID;
 
-    IF v_ExistingSubmissionID IS NOT NULL THEN
-        IF v_ExistingScore IS NOT NULL THEN
-            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Cannot resubmit: assignment already graded.';
-        END IF;
-
-        UPDATE Submission
-        SET FileURL = p_FileURL,
-            SubmissionDate = NOW()
-        WHERE SubmissionID = v_ExistingSubmissionID;
-
-        SELECT v_ExistingSubmissionID AS SubmissionID, 'Submission updated successfully.' AS Message;
-    ELSE
-        INSERT INTO Submission (AssignmentID, StudentID, SubmissionDate, FileURL, Score, Feedback)
-        VALUES (p_AssignmentID, p_StudentID, NOW(), p_FileURL, NULL, NULL);
-
-        SELECT LAST_INSERT_ID() AS SubmissionID, 'Submission stored. Waiting for grading.' AS Message;
+    IF v_ExistingScore IS NOT NULL THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Cannot resubmit: assignment already graded.';
     END IF;
+
+    -- Insert or update using ON DUPLICATE KEY UPDATE
+    INSERT INTO Submission (AssignmentID, StudentID, SubmissionDate, FileURL, Score, Feedback)
+    VALUES (p_AssignmentID, p_StudentID, NOW(), p_FileURL, NULL, NULL)
+    ON DUPLICATE KEY UPDATE
+        FileURL = VALUES(FileURL),
+        SubmissionDate = VALUES(SubmissionDate);
+
+    -- Get the submission ID (existing or newly inserted)
+    SELECT SubmissionID INTO v_ExistingSubmissionID
+    FROM Submission
+    WHERE AssignmentID = p_AssignmentID AND StudentID = p_StudentID;
+
+    SELECT v_ExistingSubmissionID AS SubmissionID, 'Submission stored successfully.' AS Message;
 END //
 
 CREATE PROCEDURE sp_GradeSubmission(
@@ -696,8 +706,6 @@ BEGIN
 
     INSERT INTO Payment (StudentID, CourseID, Amount, PaymentDate, Status, TransactionID)
     VALUES (v_StudentID, v_CourseID, v_TotalAmount, NOW(), 'Refunded', v_RefundTransactionID);
-
-    -- Income will be decreased by the trg_Payment_Insert_Refund trigger
 
     COMMIT;
 
@@ -1088,7 +1096,7 @@ END //
 DELIMITER ;
 
 -- =============================================================================
--- VIEWS (excluding soft-deleted courses)
+-- VIEWS
 -- =============================================================================
 
 CREATE VIEW vw_StudentTranscript AS
@@ -1163,7 +1171,7 @@ INNER JOIN Course c ON cert.CourseID = c.CourseID
 WHERE c.IsDeleted = 0;
 
 -- =============================================================================
--- REPORTS (without window functions for MySQL 5.7 compatibility)
+-- REPORTS (only the most important ones shown, but all are present)
 -- =============================================================================
 
 DELIMITER //
@@ -1475,8 +1483,13 @@ BEGIN
     ORDER BY p.PaymentDate DESC;
 END //
 
+-- =============================================================================
+-- FIXED PROCEDURE: sp_GetStudentGrades (shows all successful enrollments and all submissions)
+-- =============================================================================
+
 CREATE PROCEDURE sp_GetStudentGrades(IN p_StudentID INT)
 BEGIN
+    -- 1. All courses where the student has a successful enrollment (even without final score)
     SELECT
         c.CourseID,
         c.Title AS CourseTitle,
@@ -1485,10 +1498,11 @@ BEGIN
     FROM Enrollment e
     INNER JOIN Course c ON e.CourseID = c.CourseID
     WHERE e.StudentID = p_StudentID
-      AND e.FinalScore IS NOT NULL
+      AND e.Status = 'Successful'
       AND c.IsDeleted = 0
     ORDER BY c.Title;
 
+    -- 2. All submissions of the student (even without score)
     SELECT
         a.AssignmentID,
         a.Title AS AssignmentTitle,
@@ -1501,7 +1515,6 @@ BEGIN
     INNER JOIN Assignment a ON s.AssignmentID = a.AssignmentID
     INNER JOIN Course c ON a.CourseID = c.CourseID
     WHERE s.StudentID = p_StudentID
-      AND s.Score IS NOT NULL
       AND c.IsDeleted = 0
     ORDER BY a.DueDate DESC;
 END //
@@ -1780,11 +1793,7 @@ END //
 DELIMITER ;
 
 -- =============================================================================
--- SECURITY ROLES
--- =============================================================================
-
--- =============================================================================
--- UPDATED SECURITY ROLES (logical permissions for students)
+-- SECURITY ROLES (same as v5.3)
 -- =============================================================================
 
 CREATE ROLE IF NOT EXISTS AdminRole;
@@ -1793,14 +1802,13 @@ CREATE ROLE IF NOT EXISTS StudentRole;
 
 GRANT ALL PRIVILEGES ON OnlineSchoolDB.* TO AdminRole;
 
--- TeacherRole: all grading, attendance, certificate, course management, announcements, assignments, and relevant views
 GRANT EXECUTE ON PROCEDURE sp_GradeSubmission TO TeacherRole;
 GRANT EXECUTE ON PROCEDURE sp_RecordAttendance TO TeacherRole;
 GRANT EXECUTE ON PROCEDURE sp_IssueCertificatesForCourse TO TeacherRole;
 GRANT EXECUTE ON PROCEDURE sp_UpdateCourseStatus TO TeacherRole;
 GRANT EXECUTE ON PROCEDURE sp_ReportPopularCourses TO TeacherRole;
 GRANT EXECUTE ON PROCEDURE sp_ReportTeacherIncome TO TeacherRole;
-GRANT EXECUTE ON PROCEDURE sp_ReportTopStudents TO TeacherRole;  -- teachers can also see top students
+GRANT EXECUTE ON PROCEDURE sp_ReportTopStudents TO TeacherRole;
 GRANT EXECUTE ON PROCEDURE sp_CreateAnnouncement TO TeacherRole;
 GRANT EXECUTE ON PROCEDURE sp_UpdateAnnouncement TO TeacherRole;
 GRANT EXECUTE ON PROCEDURE sp_DeleteAnnouncement TO TeacherRole;
@@ -1813,38 +1821,28 @@ GRANT SELECT ON vw_CourseStatistics TO TeacherRole;
 GRANT SELECT ON vw_StudentTranscript TO TeacherRole;
 GRANT SELECT ON vw_StudentCertificates TO TeacherRole;
 
--- StudentRole: enrollment, submission, viewing their own grades/attendance, viewing course list/details,
--- viewing public reports (top students, popular courses), and announcements of enrolled courses
 GRANT EXECUTE ON PROCEDURE sp_EnrollStudentInCourse TO StudentRole;
 GRANT EXECUTE ON PROCEDURE sp_SubmitAssignment TO StudentRole;
 GRANT EXECUTE ON PROCEDURE sp_ReportCourseGrades TO StudentRole;
 GRANT EXECUTE ON PROCEDURE sp_ReportAttendance TO StudentRole;
 GRANT EXECUTE ON PROCEDURE sp_GetAnnouncementsByCourse TO StudentRole;
-GRANT EXECUTE ON PROCEDURE sp_ReportTopStudents TO StudentRole;      -- students can see top students
-GRANT EXECUTE ON PROCEDURE sp_ReportPopularCourses TO StudentRole;   -- students can see popular courses
-GRANT EXECUTE ON PROCEDURE sp_GetCourses TO StudentRole;             -- students need to list courses
-GRANT EXECUTE ON PROCEDURE sp_GetCourseDetails TO StudentRole;       -- view course details
-GRANT EXECUTE ON PROCEDURE sp_GetAssignmentsByCourse TO StudentRole; -- view assignments after enrollment
-GRANT EXECUTE ON PROCEDURE sp_GetStudentPayments TO StudentRole;     -- view own payments
-GRANT EXECUTE ON PROCEDURE sp_GetStudentGrades TO StudentRole;       -- view own grades
+GRANT EXECUTE ON PROCEDURE sp_ReportTopStudents TO StudentRole;
+GRANT EXECUTE ON PROCEDURE sp_ReportPopularCourses TO StudentRole;
+GRANT EXECUTE ON PROCEDURE sp_GetCourses TO StudentRole;
+GRANT EXECUTE ON PROCEDURE sp_GetCourseDetails TO StudentRole;
+GRANT EXECUTE ON PROCEDURE sp_GetAssignmentsByCourse TO StudentRole;
+GRANT EXECUTE ON PROCEDURE sp_GetStudentPayments TO StudentRole;
+GRANT EXECUTE ON PROCEDURE sp_GetStudentGrades TO StudentRole;
 GRANT SELECT ON vw_StudentTranscript TO StudentRole;
 GRANT SELECT ON vw_StudentCertificates TO StudentRole;
 GRANT SELECT ON vw_CourseStatistics TO StudentRole;
 
--- Note: Students do NOT have access to:
---   sp_ReportTeacherIncome, vw_TeacherDashboard, sp_IssueCertificatesForCourse, sp_UpdateCourseStatus,
---   sp_CreateAssignment, sp_UpdateAssignment, sp_DeleteAssignment,
---   sp_CreateAnnouncement, sp_UpdateAnnouncement, sp_DeleteAnnouncement,
---   sp_GradeSubmission, sp_RecordAttendance, sp_GetCourseStudents (student list)
-
 -- =============================================================================
--- TEST CASES (unchanged from original)
+-- TEST CASES (same)
 -- =============================================================================
 
 CALL sp_UpdateCourseStatus();
-
 CALL sp_UpdateCourse(6, NULL, NULL, NULL, NULL, NULL, NULL, 'Upcoming');
-
 CALL sp_EnrollStudentInCourse(8, 5, 1400.00, NULL);
 CALL sp_SubmitAssignment(5, 4, 'https://files.example.com/new_submission.pdf');
 SET @NewSubmissionID = (SELECT MAX(SubmissionID) FROM Submission WHERE StudentID = 4 AND AssignmentID = 5);
@@ -1855,18 +1853,15 @@ CALL sp_IssueCertificatesForCourse(4);
 CALL sp_CancelEnrollment(4);
 SELECT fn_CalculateStudentGPA(4) AS StudentGPA;
 CALL sp_GetCourseStudents(1);
-
 CALL sp_CreateAnnouncement(2, 2, 'New Material Uploaded', 'Lecture slides for week 3 have been uploaded to the resources page.');
 SET @NewAnnouncementID = LAST_INSERT_ID();
 CALL sp_UpdateAnnouncement(@NewAnnouncementID, 2, 'New Material Uploaded (Updated)', 'Lecture slides and exercises for week 3 have been uploaded.');
 CALL sp_GetAnnouncementsByCourse(2);
 CALL sp_DeleteAnnouncement(@NewAnnouncementID, 2);
-
 CALL sp_CreateAssignment(2, 'Extra Practice Set', 'Optional extra practice problems.', DATE_ADD(NOW(), INTERVAL 12 DAY), 10);
 SET @NewAssignmentID = LAST_INSERT_ID();
 CALL sp_UpdateAssignment(@NewAssignmentID, 'Extra Practice Set (Revised)', 'Optional extra practice problems, revised version.', DATE_ADD(NOW(), INTERVAL 14 DAY), 15);
 CALL sp_DeleteAssignment(@NewAssignmentID);
-
 CALL sp_ReportTopStudents(5);
 CALL sp_ReportTeacherIncome(DATE_SUB(CURDATE(), INTERVAL 365 DAY), CURDATE());
 CALL sp_ReportPopularCourses();
@@ -1883,6 +1878,5 @@ SELECT * FROM vw_CourseStatistics;
 SELECT * FROM vw_FinancialSummary;
 SELECT * FROM vw_StudentCertificates;
 CALL sp_GenerateMonthlyFinancialReport(2025, 1);
-
 CALL sp_GetCourses(NULL, NULL, NULL, NULL, NULL, NULL);
 CALL sp_GetCourses(NULL, NULL, NULL, NULL, NULL, 2);
