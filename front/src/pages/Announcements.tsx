@@ -5,7 +5,15 @@ import { listCourses } from '../api/courses';
 import { getStudentTranscript } from '../api/index';
 import { useApi } from '../hooks/useApi';
 
-function fmtDate(d?: string | null) { return d ? new Date(d).toLocaleDateString('fa-IR') : '—'; }
+function fmtDate(d?: string | null) {
+  if (!d) return '—';
+
+  return new Intl.DateTimeFormat('fa-IR-u-ca-persian', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+  }).format(new Date(d));
+}
 
 interface AnnouncementsProps {
   onOpenCourse?: (courseId: number) => void;
