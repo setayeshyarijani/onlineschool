@@ -107,13 +107,7 @@ export default function Users() {
                     <td>{userRoleBadge(u.Role)}</td>
                     <td style={{ direction: 'ltr', textAlign: 'right', color: 'var(--gray-500)' }}>{u.PhoneNumber ?? '—'}</td>
                     <td style={{ fontSize: 'var(--text-xs)', color: 'var(--gray-500)' }}>
-                      {u.RegistrationDate
-                        ? new Intl.DateTimeFormat('fa-IR-u-ca-persian', {
-                          year: 'numeric',
-                          month: 'numeric',
-                          day: 'numeric',
-                        }).format(new Date(u.RegistrationDate))
-                       : '—'}
+                      {u.RegistrationDate ? new Date(u.RegistrationDate).toLocaleDateString('fa-IR') : '—'}
                     </td>
                     {isAdmin && (
                       <td>

@@ -130,13 +130,7 @@ export default function Payments() {
                     <td style={{ color: 'var(--gray-600)' }}>{p.CourseTitle ?? p.CourseID}</td>
                     <td style={{ fontWeight: 700, color: 'var(--accent-green)' }}>{formatPrice(p.Amount)}</td>
                     <td style={{ fontSize: 'var(--text-xs)', color: 'var(--gray-500)' }}>
-                      {p.PaymentDate
-                        ? new Intl.DateTimeFormat('fa-IR-u-ca-persian', {
-                          year: 'numeric',
-                          month: 'numeric',
-                          day: 'numeric',
-                        }).format(new Date(p.PaymentDate))
-                       : '—'}
+                      {p.PaymentDate ? new Date(p.PaymentDate).toLocaleDateString('fa-IR') : '—'}
                     </td>
                     <td style={{ fontSize: 'var(--text-xs)', fontFamily: 'var(--font-mono)', direction: 'ltr', textAlign: 'right', color: 'var(--gray-400)' }}>
                       {p.TransactionID ?? '—'}
