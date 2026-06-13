@@ -298,8 +298,8 @@ export default function Assignments({ onOpenCourse }: AssignmentsProps) {
                       <td style={{ fontWeight: 600 }}>{a.Title}</td>
                       <td style={{ color: 'var(--gray-500)', fontSize: 'var(--text-xs)' }}>{a.Description ?? '—'}</td>
                       <td style={{ fontSize: 'var(--text-xs)' }}>{fmtDate(a.DueDate)}</td>
-                      <td style={{ fontFamily: 'monospace', direction: 'ltr' }}>{a.MaxScore}</td>
-                      <td style={{ fontFamily: 'monospace', direction: 'ltr' }}>{a.SubmissionCount ?? 0}</td>
+                      <td style={{ fontFamily: 'monospace', direction: 'ltr' ,textAlign: 'right'}}>{a.MaxScore}</td>
+                      <td style={{ fontFamily: 'monospace', direction: 'ltr' ,textAlign: 'right'}}>{a.SubmissionCount ?? 0}</td>
                       {isTeacher && (
                         <td>
                           <div className="flex gap-2">
