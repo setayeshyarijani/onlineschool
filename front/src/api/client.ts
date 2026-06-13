@@ -2,7 +2,7 @@
 // تمام درخواست‌ها از اینجا می‌گذرند.
 // توکن JWT از localStorage خوانده می‌شود و به هدر Authorization اضافه می‌شه.
 
-export const API_BASE = 'http://localhost:8000';
+export const API_BASE = 'http://2.190.28.236:8000';
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
