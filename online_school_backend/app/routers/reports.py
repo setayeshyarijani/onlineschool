@@ -23,10 +23,20 @@ def top_students(top_n: int = 10, current_user: dict = Depends(role_required(["A
 @router.get("/teacher-income")
 def teacher_income(start_date: str, end_date: str, current_user: dict = Depends(role_required(["Admin", "Teacher"]))):
     user_id = int(current_user["sub"])
-    logger.info(f"User {user_id} requesting teacher income from {start_date} to {end_date}")
+    role = current_user["role"]
+    logger.info(f"User {user_id} ({role}) requesting teacher income from {start_date} to {end_date}")
+    
+    # فراخوانی SP که همه درآمدها را برمی‌گرداند (چون SP فعلاً پارامتر TeacherID ندارد)
     result_sets = call_stored_procedure("sp_ReportTeacherIncome", {"@StartDate": start_date, "@EndDate": end_date})
     data = _first_result_set(result_sets)
-    logger.info(f"Returned {len(data)} income records")
+    
+    if role == "Teacher":
+        # فیلتر فقط ردیف‌های مربوط به این معلم
+        data = [row for row in data if row.get("TeacherID") == user_id]
+        logger.info(f"Filtered to {len(data)} records for teacher {user_id}")
+    else:
+        logger.info(f"Admin {user_id} sees all {len(data)} records")
+    
     return data
 
 @router.get("/popular-courses")
